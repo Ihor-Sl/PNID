@@ -1,90 +1,140 @@
-# Атестаційне завдання — GitHub Actions
+# PNID — CI/CD Pipeline
 
-[![1. Pytest](https://github.com/USER/REPO/actions/workflows/01-pytest.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/01-pytest.yml)
-[![2. Lint](https://github.com/USER/REPO/actions/workflows/02-lint.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/02-lint.yml)
-[![3. Multi-version](https://github.com/USER/REPO/actions/workflows/03-multi-version.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/03-multi-version.yml)
-[![4. Docker](https://github.com/USER/REPO/actions/workflows/04-docker.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/04-docker.yml)
-[![5. HTML Report](https://github.com/USER/REPO/actions/workflows/05-html-report.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/05-html-report.yml)
+[![CI](https://github.com/Ihor-Sl/PNID/actions/workflows/ci.yml/badge.svg)](https://github.com/Ihor-Sl/PNID/actions/workflows/ci.yml)
 
-Проєкт демонструє п'ять сценаріїв CI/CD на GitHub Actions для невеликого Python-пакета з калькулятором та рядковими утилітами.
+Проєкт використовує єдиний файл `.github/workflows/ci.yml` із 6 джобами.
 
-## Структура
+## Структура пайплайну
 
 ```
-.
-├── src/
-│   ├── __init__.py
-│   ├── calculator.py      # Калькулятор з історією
-│   └── string_utils.py    # Утиліти для рядків
-├── tests/
-│   ├── test_calculator.py    # 20 тестів
-│   └── test_string_utils.py  # 26 тестів
-├── .github/workflows/
-│   ├── 01-pytest.yml          # Завдання 1
-│   ├── 02-lint.yml            # Завдання 2
-│   ├── 03-multi-version.yml   # Завдання 3
-│   ├── 04-docker.yml          # Завдання 4
-│   └── 05-html-report.yml     # Завдання 5
-├── main.py
-├── Dockerfile
-├── requirements.txt
-├── requirements-dev.txt
-├── pyproject.toml
-└── .flake8
+push / pull_request / workflow_dispatch
+│
+├── 1 · lint ─────────────────────────────────────────┐
+│         │                                            │
+│         ├── 2 · test ──── 4 · docker-build          │
+│         │         └───── 5a · generate-report        │
+│         │                        └── 5b · deploy-pages
+│         │
+│         └── 3 · test-matrix  (3 ОС × 4 версії Python)
 ```
 
-## П'ять реалізованих задач
+> `generate-report` та `deploy-pages` не запускаються на `pull_request` — деплой тільки з `main`/`master`.
 
-### 1. Автоматичне тестування з Pytest (`01-pytest.yml`)
-Запускає 46 тестів на Ubuntu з Python 3.12 при кожному push та pull request. Тести використовують fixtures, parametrize і організовані по класах.
+---
 
-### 2. Перевірка стилю коду — Linting (`02-lint.yml`)
-Перевіряє код двома інструментами: **flake8** (стиль PEP 8) і **black** (форматування у режимі `--check`).
+## Джоби
 
-### 3. Мультиверсійне тестування (`03-multi-version.yml`)
-Матриця 4 × 3 = **12 комбінацій**: Python 3.9 / 3.10 / 3.11 / 3.12 на Ubuntu / Windows / macOS. `fail-fast: false`, тому одна помилка не зупиняє решту.
+### 1 · Lint — перевірка стилю коду
 
-### 4. Збірка Docker-контейнера (`04-docker.yml`)
-- Налаштовує Docker Buildx;
-- Збирає образ з кешуванням шарів через `type=gha`;
-- Запускає контейнер для перевірки, що `main.py` коректно стартує.
+**Тригер:** будь-який push / PR  
+**Залежності:** немає (запускається першим)
 
-### 5. Автоматичний HTML-звіт (`05-html-report.yml`)
-- Генерує HTML-звіт через `pytest-html` + звіт покриття через `pytest-cov`;
-- Зберігає як артефакт workflow на 30 днів;
-- Публікує на **GitHub Pages** (живе посилання після першого успішного запуску).
+| Інструмент | Версія | Що перевіряє |
+|-----------|--------|--------------|
+| `flake8`  | 7.1.1  | PEP 8, синтаксичні помилки |
+| `black`   | 24.10.0 | Форматування коду (`--check`) |
 
-## Як запустити локально
+Перевіряються: `src/`, `tests/`, `main.py`
+
+---
+
+### 2 · Pytest — автоматичне тестування
+
+**Тригер:** після успішного `lint`  
+**Python:** 3.12 / ubuntu-latest
+
+Запускає повний набір тестів із детальним виводом:
+```bash
+pytest -v --tb=short
+```
+
+---
+
+### 3 · Multi-version — матричне тестування
+
+**Тригер:** після успішного `lint` (паралельно з `test`)  
+**Матриця:** 3 ОС × 4 версії = **12 джобів**
+
+| ОС | Python |
+|----|--------|
+| ubuntu-latest | 3.9 |
+| windows-latest | 3.10 |
+| macos-latest | 3.11 |
+| | 3.12 |
+
+`fail-fast: false` — усі комбінації завершуються незалежно одна від одної.
+
+---
+
+### 4 · Docker — збірка контейнера
+
+**Тригер:** після успішного `test`  
+**Що робить:**
+- Збирає образ `atestation-app:latest` через Docker Buildx
+- Використовує GitHub Actions Cache (`type=gha`) для прискорення повторних збірок
+- Перевіряє запуск контейнера (`docker run --rm`)
+- `push: false` — образ не публікується в registry
+
+---
+
+### 5 · HTML-звіт → GitHub Pages
+
+**Тригер:** після успішного `test`, тільки на `push` (не на PR)
+
+**5a `generate-report`** — генерує звіт:
+```bash
+pytest --html=public/index.html --self-contained-html \
+       --cov=src --cov-report=html:public/coverage
+```
+
+**5b `deploy-pages`** — публікує папку `public/` на GitHub Pages.
+
+Звіт доступний за адресою:  
+**https://ihor-sl.github.io/PNID/**
+
+---
+
+## Налаштування GitHub Pages (одноразово)
+
+Перед першим деплоєм необхідно увімкнути Pages вручну:
+
+1. Відкрити **Settings → Pages**
+2. У полі **Source** обрати **GitHub Actions**
+3. Зберегти
+
+> Без цього кроку `deploy-pages` повертає помилку 404.
+
+---
+
+## Локальний запуск
 
 ```bash
-# Встановлення dev-залежностей
+# Встановлення залежностей
 pip install -r requirements-dev.txt
 
 # Тести
-pytest -v
+pytest -v --tb=short
 
 # Лінтинг
 flake8 src tests main.py
 black --check src tests main.py
 
-# HTML-звіт
-pytest --html=report.html --self-contained-html --cov=src --cov-report=html
-
-# Docker
-docker build -t atestation-app .
-docker run --rm atestation-app
+# HTML-звіт локально
+pytest --html=report.html --self-contained-html --cov=src --cov-report=html:coverage
 ```
 
-## Налаштування GitHub Pages
+---
 
-Щоб workflow №5 запрацював:
-1. Settings → Pages → Source: **GitHub Actions**.
-2. Після push на `main` workflow автоматично опублікує звіт.
-3. Посилання з'явиться у вкладці Actions → конкретний run → Deploy job.
+## Структура файлів
 
-## Результати локальної перевірки
-
-- ✅ 46 тестів пройдено
-- ✅ flake8 без зауважень
-- ✅ black без зауважень
-- ✅ покриття згенеровано
+```
+.
+├── .github/
+│   └── workflows/
+│       └── ci.yml          # єдиний CI файл (6 джобів)
+├── src/                    # вихідний код
+├── tests/                  # тести
+├── main.py
+├── requirements-dev.txt    # pytest, flake8, black, pytest-html, pytest-cov
+└── Dockerfile
+```
