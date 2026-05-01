@@ -1,0 +1,14 @@
+.git
+.github
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+htmlcov/
+report.html
+.flake8
+pyproject.toml
+requirements-dev.txt
+README.md
+.gitignore
+.dockerignore
