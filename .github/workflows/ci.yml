@@ -1,0 +1,186 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Потрібно для deploy-pages (job 5)
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Дозволяє лише одне одночасне розгортання Pages
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 1 — Lint: перевірка стилю коду
+  # ──────────────────────────────────────────────────────────────
+  lint:
+    name: "1 · Lint — flake8 + black"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Клонування репозиторію
+        uses: actions/checkout@v4
+
+      - name: Встановлення Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Встановлення інструментів лінтингу
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8==7.1.1 black==24.10.0
+
+      - name: Перевірка flake8
+        run: flake8 src tests main.py
+
+      - name: Перевірка black (тільки перевірка, без змін)
+        run: black --check src tests main.py
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 2 — Test: базовий запуск pytest
+  # ──────────────────────────────────────────────────────────────
+  test:
+    name: "2 · Pytest — автоматичне тестування"
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Клонування репозиторію
+        uses: actions/checkout@v4
+
+      - name: Встановлення Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Встановлення залежностей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Запуск тестів
+        run: pytest -v --tb=short
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 3 — Multi-version: матриця Python / ОС
+  # ──────────────────────────────────────────────────────────────
+  test-matrix:
+    name: "3 · Multi-version — Python ${{ matrix.python-version }} / ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Клонування репозиторію
+        uses: actions/checkout@v4
+
+      - name: Встановлення Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Встановлення залежностей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Запуск тестів
+        run: pytest -v
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 4 — Docker: збірка та перевірка образу
+  # ──────────────────────────────────────────────────────────────
+  docker-build:
+    name: "4 · Docker — збірка контейнера"
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Клонування репозиторію
+        uses: actions/checkout@v4
+
+      - name: Налаштування Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Збірка Docker-образу
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: atestation-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Перевірка запуску контейнера
+        run: docker run --rm atestation-app:latest
+
+      - name: Інформація про образ
+        run: docker images atestation-app:latest
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 5 — HTML-звіт + публікація на GitHub Pages
+  # ──────────────────────────────────────────────────────────────
+  generate-report:
+    name: "5 · HTML-звіт — генерація"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Клонування репозиторію
+        uses: actions/checkout@v4
+
+      - name: Встановлення Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Встановлення залежностей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Запуск тестів з HTML-звітом і покриттям
+        run: |
+          mkdir -p public
+          pytest --html=public/index.html --self-contained-html \
+                 --cov=src --cov-report=html:public/coverage
+
+      - name: Підготовка для GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+
+  deploy-pages:
+    name: "5 · HTML-звіт — публікація на GitHub Pages"
+    runs-on: ubuntu-latest
+    needs: generate-report
+    if: github.event_name != 'pull_request'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Розгортання на GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
