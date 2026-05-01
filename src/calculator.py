@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 # Some changes
 class Calculator:
     """Калькулятор, що підтримує основні арифметичні операції."""
